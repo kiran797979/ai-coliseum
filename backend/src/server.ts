@@ -13,7 +13,7 @@ export async function createServer(): Promise<express.Application> {
 
   const app = express();
 
-  app.use(cors({ origin: config.frontendUrl || 'http://localhost:5173', credentials: true }));
+  app.use(cors());
   app.use(express.json());
 
   app.use('/health', healthRouter);
