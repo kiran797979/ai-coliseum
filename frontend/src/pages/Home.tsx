@@ -305,7 +305,7 @@ export default function Home() {
       <footer className="border-t border-gray-800 py-8 px-4">
         <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center text-gray-600 text-sm">
           <p style={{ fontFamily: "'Press Start 2P', cursive", fontSize: '0.6rem' }}>
-            ⚔️ AI Coliseum 2025
+            ⚔️ AI Coliseum 2026
           </p>
           <div className="flex gap-6 mt-4 md:mt-0">
             <span>Built on Monad</span>
