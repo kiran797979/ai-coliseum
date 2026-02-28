@@ -1,107 +1,214 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 
-export default function BattleLog({ lines = [], autoPlay = true }: { lines: string[], autoPlay?: boolean }) {
+/* ─── Line classification ─── */
+type LineType = 'system' | 'round' | 'attack' | 'critical' | 'dodge' | 'winner' | 'battle-start' | 'damage' | 'separator' | 'normal'
+
+function classifyLine(line: string): LineType {
+  const l = line.toLowerCase()
+  if (l.includes('winner') || l.includes('🏆') || l.includes('wins!') || l.includes('champion')) return 'winner'
+  if (l.includes('round ') || l.match(/round\s*\d/)) return 'round'
+  if (l.includes('critical') || l.includes('💥') || l.includes('devastating')) return 'critical'
+  if (l.includes('dodge') || l.includes('evade') || l.includes('miss') || l.includes('↪')) return 'dodge'
+  if (l.includes('attack') || l.includes('strike') || l.includes('slash') || l.includes('punch') || l.includes('hit')) return 'attack'
+  if (l.includes('damage') || l.includes('hp') || l.includes('health')) return 'damage'
+  if (l.startsWith('⚔️') || l.startsWith('battle') || l.includes('begins') || l.includes('🏟️')) return 'battle-start'
+  if (l.startsWith('---') || l.startsWith('═══') || l.startsWith('~~~')) return 'separator'
+  if (l.startsWith('[') || l.includes('loading') || l.includes('initializ')) return 'system'
+  return 'normal'
+}
+
+function getLineStyles(type: LineType): { className: string; prefix: string } {
+  switch (type) {
+    case 'winner':
+      return { className: 'terminal-line winner', prefix: '🏆 ' }
+    case 'round':
+      return { className: 'terminal-line round-header', prefix: '▸ ' }
+    case 'critical':
+      return { className: 'terminal-line critical', prefix: '⚡ ' }
+    case 'dodge':
+      return { className: 'terminal-line defend', prefix: '↪ ' }
+    case 'attack':
+      return { className: 'terminal-line attack', prefix: '→ ' }
+    case 'damage':
+      return { className: 'terminal-line damage', prefix: '  ' }
+    case 'battle-start':
+      return { className: 'text-purple-400 font-bold', prefix: '🏟️ ' }
+    case 'separator':
+      return { className: 'terminal-line separator', prefix: '' }
+    case 'system':
+      return { className: 'terminal-line system', prefix: '  ' }
+    default:
+      return { className: 'text-green-400', prefix: '  ' }
+  }
+}
+
+/* ─── Props ─── */
+interface BattleLogProps {
+  lines?: string[]
+  autoPlay?: boolean
+  speed?: number
+  onLineReveal?: (index: number, type: LineType) => void
+  onComplete?: () => void
+}
+
+/* ─── Component ─── */
+export default function BattleLog({
+  lines = [],
+  autoPlay = true,
+  speed = 220,
+  onLineReveal,
+  onComplete,
+}: BattleLogProps) {
   const [visibleCount, setVisibleCount] = useState(autoPlay ? 0 : lines.length)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // Auto-scroll to bottom
+  const scrollToBottom = useCallback(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }
+  }, [])
+
+  // Typewriter reveal effect
   useEffect(() => {
-    if (!autoPlay || lines.length === 0) return
+    if (!autoPlay || lines.length === 0) {
+      setVisibleCount(lines.length)
+      return
+    }
+
     setVisibleCount(0)
     let i = 0
-    const timer = setInterval(() => {
+
+    timerRef.current = setInterval(() => {
       i++
       setVisibleCount(i)
-      if (i >= lines.length) clearInterval(timer)
-    }, 250)
-    return () => clearInterval(timer)
-  }, [lines, autoPlay])
 
+      // Classify line for callback
+      const line = lines[i - 1]
+      if (line) {
+        const type = classifyLine(line)
+        onLineReveal?.(i - 1, type)
+      }
+
+      if (i >= lines.length) {
+        if (timerRef.current) clearInterval(timerRef.current)
+        onComplete?.()
+      }
+    }, speed)
+
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current)
+    }
+  }, [lines, autoPlay, speed, onLineReveal, onComplete])
+
+  // Scroll on new line
+  useEffect(() => {
+    scrollToBottom()
+  }, [visibleCount, scrollToBottom])
+
+  /* ─── Empty state ─── */
   if (!lines || lines.length === 0) {
     return (
-      <div className="bg-[#0d1117] rounded-xl border border-gray-800 p-6 text-center">
-        <p className="text-gray-600 font-mono text-sm">No battle log available.</p>
+      <div className="terminal terminal-scanlines">
+        <div className="terminal-header">
+          <div className="terminal-dot red" />
+          <div className="terminal-dot yellow" />
+          <div className="terminal-dot green" />
+          <span className="terminal-header-title">combat_log.sh</span>
+        </div>
+        <div className="flex items-center justify-center h-48">
+          <p className="text-gray-600 font-mono text-sm">
+            Awaiting combat initialization...
+          </p>
+        </div>
       </div>
     )
   }
 
-  return (
-    <div className="bg-[#0d1117] rounded-xl border border-gray-800 overflow-hidden">
+  /* ─── Progress ─── */
+  const progress = lines.length > 0 ? Math.round((visibleCount / lines.length) * 100) : 0
+  const isComplete = visibleCount >= lines.length
 
-      {/* Terminal Header */}
-      <div className="flex items-center gap-2 px-4 py-2.5 bg-[#161b22] border-b border-gray-800">
-        <div className="w-3 h-3 rounded-full bg-red-500/80" />
-        <div className="w-3 h-3 rounded-full bg-yellow-500/80" />
-        <div className="w-3 h-3 rounded-full bg-green-500/80" />
-        <span className="ml-2 text-gray-500 text-xs font-mono">combat_log.sh</span>
+  return (
+    <div className="terminal terminal-scanlines">
+      {/* ── Terminal Header ── */}
+      <div className="terminal-header">
+        <div className="terminal-dot red" />
+        <div className="terminal-dot yellow" />
+        <div className="terminal-dot green" />
+        <span className="terminal-header-title">combat_log.sh</span>
+        <div className="ml-auto flex items-center gap-2">
+          {!isComplete && (
+            <span className="text-xs text-gray-600 font-mono">{progress}%</span>
+          )}
+          {isComplete && (
+            <span className="text-xs text-green-600 font-mono">✓ complete</span>
+          )}
+        </div>
       </div>
 
-      {/* Log Content */}
-      <div className="p-4 max-h-96 overflow-y-auto font-mono text-sm space-y-1">
-        {/* Prompt */}
-        <div className="text-gray-600 text-xs mb-3">
-          $ ./resolve_combat --mode=ai --narrator=deepseek
+      {/* ── Progress Bar ── */}
+      {!isComplete && autoPlay && (
+        <div className="h-0.5 bg-gray-800 -mx-5 mb-3">
+          <div
+            className="h-full bg-gradient-to-r from-purple-500 to-cyan-500 transition-all duration-300"
+            style={{ width: `${progress}%` }}
+          />
         </div>
+      )}
 
+      {/* ── Prompt ── */}
+      <div className="text-gray-600 text-xs mb-3 font-mono">
+        <span className="text-purple-500">❯</span> ./resolve_combat --mode=ai --narrator=deepseek
+      </div>
+
+      {/* ── Log Lines ── */}
+      <div ref={scrollRef} className="space-y-0.5 max-h-64 overflow-y-auto pr-1">
         {lines.slice(0, visibleCount).map((line, i) => {
-          // Color code different line types
-          let color = 'text-green-400'
-          let prefix = '  '
-
-          if (line.includes('Round') || line.includes('round')) {
-            color = 'text-yellow-400 font-bold'
-            prefix = '\n▸ '
-          } else if (line.includes('Winner') || line.includes('winner') || line.includes('🏆')) {
-            color = 'text-yellow-300 font-bold'
-            prefix = '\n★ '
-          } else if (line.includes('critical') || line.includes('Critical') || line.includes('💥')) {
-            color = 'text-red-400 font-bold'
-            prefix = '  ⚡ '
-          } else if (line.includes('dodge') || line.includes('Dodge') || line.includes('miss')) {
-            color = 'text-cyan-400'
-            prefix = '  ↪ '
-          } else if (line.includes('damage') || line.includes('attack') || line.includes('Attack')) {
-            color = 'text-green-300'
-            prefix = '  → '
-          } else if (line.startsWith('⚔️') || line.startsWith('Battle')) {
-            color = 'text-purple-400 font-bold'
-            prefix = '🏟️ '
-          }
+          const type = classifyLine(line)
+          const { className, prefix } = getLineStyles(type)
+          const isLatest = i === visibleCount - 1 && autoPlay && !isComplete
 
           return (
             <div
-              key={i}
-              className={`${color} leading-relaxed transition-opacity duration-300`}
+              key={`${i}-${line.slice(0, 20)}`}
+              className={`${className} leading-relaxed ${isLatest ? 'animate-fade-in-left' : ''}`}
               style={{
-                opacity: 1,
-                animation: autoPlay ? `fadeIn 0.3s ease-in` : 'none',
-                animationDelay: `${i * 0.05}s`,
-                animationFillMode: 'both',
+                animation: autoPlay ? 'terminalFadeIn 0.3s ease-in-out' : 'none',
               }}
             >
+              {/* Round headers get extra spacing */}
+              {type === 'round' && i > 0 && (
+                <div className="terminal-line separator text-gray-800 text-xs my-1">
+                  ────────────────────────────
+                </div>
+              )}
               {prefix}{line}
             </div>
           )
         })}
 
-        {/* Typing cursor */}
-        {autoPlay && visibleCount < lines.length && (
-          <div className="text-green-500 animate-pulse">▌</div>
-        )}
-
-        {/* Done indicator */}
-        {visibleCount >= lines.length && lines.length > 0 && (
-          <div className="text-gray-600 text-xs mt-4 pt-3 border-t border-gray-800">
-            ✓ Combat resolved • {lines.length} events logged
+        {/* ── Typing Cursor ── */}
+        {autoPlay && !isComplete && (
+          <div className="flex items-center gap-1 mt-1">
+            <span className="text-green-500 animate-pulse text-lg leading-none">▌</span>
+            <span className="text-gray-700 text-xs font-mono">processing...</span>
           </div>
         )}
       </div>
 
-      {/* CSS for fade animation */}
-      <style>{`
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateX(-8px); }
-          to { opacity: 1; transform: translateX(0); }
-        }
-      `}</style>
+      {/* ── Completion Footer ── */}
+      {isComplete && lines.length > 0 && (
+        <div className="mt-4 pt-3 border-t border-gray-800 flex items-center justify-between">
+          <span className="text-gray-600 text-xs font-mono">
+            ✓ Combat resolved • {lines.length} events
+          </span>
+          <span className="text-gray-700 text-xs font-mono">
+            {new Date().toLocaleTimeString()}
+          </span>
+        </div>
+      )}
     </div>
   )
 }
