@@ -1,48 +1,90 @@
-import { useState, useEffect } from 'react'
-import { getFights, getAgents, createFight, resolveFight } from '../api/client'
+import { useState, useEffect, useCallback } from 'react'
+import { getFights, getAgents, createFight } from '../api/client'
+import FightCard from '../components/FightCard'
 import toast from 'react-hot-toast'
+import type { Fight, Agent } from '../types'
+
+/* ─── Filter config ─── */
+const FILTERS = [
+  { key: 'all', label: '⚔️ All' },
+  { key: 'open', label: '🟡 Open' },
+  { key: 'in_progress', label: '🔴 Live' },
+  { key: 'completed', label: '✅ Done' },
+] as const
+
+type FilterKey = (typeof FILTERS)[number]['key']
 
 export default function Arena() {
-  const [fights, setFights] = useState<any[]>([])
-  const [agents, setAgents] = useState<any[]>([])
+  const [fights, setFights] = useState<Fight[]>([])
+  const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
-  const [filter, setFilter] = useState('all')
+  const [filter, setFilter] = useState<FilterKey>('all')
+
+  // Form state
   const [agentA, setAgentA] = useState('')
   const [agentB, setAgentB] = useState('')
   const [stake, setStake] = useState('10')
   const [creating, setCreating] = useState(false)
-  const [resolving, setResolving] = useState<number | null>(null)
-  const [battleModal, setBattleModal] = useState<any>(null)
 
-  const fetchData = async () => {
+  /* ─── Fetch data ─── */
+  const fetchData = useCallback(async () => {
     setLoading(true)
     try {
       const [f, a] = await Promise.all([getFights(), getAgents()])
-      setFights(f)
-      setAgents(a)
-    } catch (e: any) {
-      toast.error('Failed to load data')
+      setFights(Array.isArray(f) ? f : [])
+      setAgents(Array.isArray(a) ? a : [])
+    } catch (_err) {
+      toast.error('Failed to load arena data')
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
-  useEffect(() => { fetchData() }, [])
+  useEffect(() => {
+    fetchData()
+  }, [fetchData])
 
-  const getAgentName = (id: number) => {
-    const agent = agents.find((a: any) => a.id === id)
-    return agent?.name ?? `Agent #${id}`
-  }
+  /* ─── ESC key closes modal ─── */
+  useEffect(() => {
+    if (!showModal) return
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowModal(false)
+    }
+    document.addEventListener('keydown', handleKey)
+    // Lock body scroll while modal is open
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.removeEventListener('keydown', handleKey)
+      document.body.style.overflow = ''
+    }
+  }, [showModal])
 
+  const getAgentName = useCallback(
+    (id: number) => {
+      const agent = agents.find((a) => a.id === id)
+      return agent?.name ?? `Agent #${id}`
+    },
+    [agents]
+  )
+
+  /* ─── Create fight ─── */
   const handleCreate = async () => {
     if (!agentA || !agentB) return toast.error('Select both agents')
     if (agentA === agentB) return toast.error('Pick two different agents')
-    if (!stake || parseFloat(stake) <= 0) return toast.error('Enter a valid stake')
+    const stakeNum = parseFloat(stake)
+    if (!stake || isNaN(stakeNum) || stakeNum <= 0) {
+      return toast.error('Enter a valid stake')
+    }
+
     setCreating(true)
     try {
-      await createFight({ agentA: Number(agentA), agentB: Number(agentB), stakeAmount: stake })
-      toast.success('Fight created!')
+      await createFight({
+        agentA: Number(agentA),
+        agentB: Number(agentB),
+        stakeAmount: stake,
+      })
+      toast.success('⚔️ Challenge created!')
       setShowModal(false)
       setAgentA('')
       setAgentB('')
@@ -55,160 +97,208 @@ export default function Arena() {
     }
   }
 
-  const handleResolve = async (id: number) => {
-    setResolving(id)
-    try {
-      const result = await resolveFight(id)
-      toast.success('Fight resolved!')
-      setBattleModal(result)
-      fetchData()
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Failed to resolve')
-    } finally {
-      setResolving(null)
-    }
-  }
-
-  const filtered = fights.filter((f: any) => {
+  /* ─── Filter fights ─── */
+  const filtered = fights.filter((f) => {
     if (filter === 'all') return true
     return f.status === filter
   })
 
+  const getFilterCount = (key: FilterKey) => {
+    if (key === 'all') return fights.length
+    return fights.filter((f) => f.status === key).length
+  }
+
+  /* ─── Stats ─── */
+  const openCount = fights.filter(
+    (f) => f.status === 'open' || f.status === 'in_progress'
+  ).length
+  const completedCount = fights.filter((f) => f.status === 'completed').length
+
+  /* ─── Safe stake display ─── */
+  const stakeValue = parseFloat(stake) || 0
+  const totalPot = (stakeValue * 2).toFixed(1)
+
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8">
-      {/* Header */}
-      <div className="flex justify-between items-center mb-8">
-        <h1 className="text-2xl font-bold text-white" style={{ fontFamily: "'Press Start 2P', cursive" }}>
-          ⚔️ The Arena
-        </h1>
+    <div className="max-w-6xl mx-auto px-4 py-8 relative z-10">
+      {/* ══════ Header ══════ */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
+        <div>
+          <h1 className="font-px-heading text-xl sm:text-2xl text-white mb-2">
+            ⚔️ The Arena
+          </h1>
+          <p className="text-gray-400 text-sm">
+            Create challenges, resolve fights with AI, watch the battle unfold.
+          </p>
+        </div>
         <button
           onClick={() => setShowModal(true)}
-          className="px-6 py-3 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-bold transition-all"
+          className="btn-battle btn-shine px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white rounded-xl font-bold transition-all hover:shadow-glow-purple hover:-translate-y-0.5 active:translate-y-0"
         >
           + Create Challenge
         </button>
       </div>
 
-      {/* Filter Tabs */}
-      <div className="flex gap-2 mb-6">
-        {['all', 'open', 'in_progress', 'completed'].map(tab => (
+      {/* ══════ Quick Stats ══════ */}
+      <div className="grid grid-cols-3 gap-3 mb-6">
+        <div className="glass-card p-3 text-center">
+          <p className="text-2xl font-bold text-white">{fights.length}</p>
+          <p className="text-gray-500 text-xs mt-0.5">Total Fights</p>
+        </div>
+        <div className="glass-card p-3 text-center">
+          <p className="text-2xl font-bold text-yellow-400">{openCount}</p>
+          <p className="text-gray-500 text-xs mt-0.5">Active</p>
+        </div>
+        <div className="glass-card p-3 text-center">
+          <p className="text-2xl font-bold text-green-400">{completedCount}</p>
+          <p className="text-gray-500 text-xs mt-0.5">Completed</p>
+        </div>
+      </div>
+
+      {/* ══════ Filter Tabs ══════ */}
+      <div className="flex gap-2 mb-6 overflow-x-auto pb-1">
+        {FILTERS.map(({ key, label }) => (
           <button
-            key={tab}
-            onClick={() => setFilter(tab)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-              filter === tab
-                ? 'bg-purple-600 text-white'
-                : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+            key={key}
+            onClick={() => setFilter(key)}
+            className={`px-4 py-2 rounded-xl text-sm font-medium transition-all whitespace-nowrap ${
+              filter === key
+                ? 'bg-purple-600 text-white shadow-glow-purple'
+                : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white border border-white/5'
             }`}
           >
-            {tab === 'all' ? 'All' : tab === 'in_progress' ? 'Fighting' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+            {label}
+            <span className="ml-1.5 text-xs opacity-60">
+              ({getFilterCount(key)})
+            </span>
           </button>
         ))}
       </div>
 
-      {/* Loading */}
-      {loading && <p className="text-gray-400 text-center py-12">Loading fights...</p>}
+      <hr className="divider-glow mb-6" />
 
-      {/* Empty State */}
-      {!loading && filtered.length === 0 && (
-        <div className="text-center py-16 text-gray-500">
-          <p className="text-4xl mb-4">🏟️</p>
-          <p>No fights yet. Create a challenge!</p>
+      {/* ══════ Loading ══════ */}
+      {loading && (
+        <div className="flex flex-col items-center justify-center py-16">
+          <div className="loading-spinner large" />
+          <p className="text-gray-500 text-sm mt-4 font-mono">Loading fights...</p>
         </div>
       )}
 
-      {/* Fight Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {filtered.map((fight: any) => (
-          <div
-            key={fight.id}
-            className="bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700 rounded-xl p-5 hover:border-purple-500 transition-all cursor-pointer"
-            onClick={() => fight.battleLog?.length > 0 && setBattleModal(fight)}
-          >
-            {/* Agents */}
-            <div className="flex items-center justify-between mb-4">
-              <div className="text-center flex-1">
-                <p className="text-lg font-bold text-white">
-                  {fight.winner === fight.agentA && '👑 '}
-                  {getAgentName(fight.agentA)}
-                </p>
-              </div>
-              <div className="px-4">
-                <span className="text-yellow-400 font-bold text-lg">⚔️ VS</span>
-              </div>
-              <div className="text-center flex-1">
-                <p className="text-lg font-bold text-white">
-                  {fight.winner === fight.agentB && '👑 '}
-                  {getAgentName(fight.agentB)}
-                </p>
-              </div>
+      {/* ══════ Empty State ══════ */}
+      {!loading && filtered.length === 0 && (
+        <div className="empty-state">
+          <div className="empty-state-icon">🏟️</div>
+          <p className="empty-state-title">No fights found</p>
+          <p className="empty-state-text">
+            {filter === 'all'
+              ? 'The arena is empty. Create the first challenge!'
+              : `No ${
+                  filter === 'in_progress' ? 'active' : filter
+                } fights. Try a different filter.`}
+          </p>
+          {filter === 'all' && (
+            <button
+              onClick={() => setShowModal(true)}
+              className="mt-4 px-5 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-sm font-bold transition-all"
+            >
+              + Create First Fight
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ══════ Fight Cards Grid ══════ */}
+      {!loading && filtered.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          {filtered.map((fight, i) => (
+            <div
+              key={fight.id}
+              className="animate-fade-in-up"
+              style={{
+                animationDelay: `${Math.min(i * 0.05, 0.4)}s`,
+                animationFillMode: 'both',
+              }}
+            >
+              <FightCard fight={fight} onResolved={fetchData} />
             </div>
+          ))}
+        </div>
+      )}
 
-            {/* Info Row */}
-            <div className="flex justify-between items-center">
-              <span className="text-yellow-400 font-mono">{fight.stakeAmount} MON</span>
-              <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                fight.status === 'completed' ? 'bg-green-900 text-green-300' :
-                fight.status === 'in_progress' ? 'bg-red-900 text-red-300 animate-pulse' :
-                'bg-yellow-900 text-yellow-300'
-              }`}>
-                {fight.status === 'completed' ? '✅ Done' :
-                 fight.status === 'in_progress' ? '🔴 Fighting' :
-                 '🟡 Open'}
-              </span>
-            </div>
-
-            {/* Resolve Button */}
-            {fight.status !== 'completed' && (
-              <button
-                onClick={(e) => { e.stopPropagation(); handleResolve(fight.id) }}
-                disabled={resolving === fight.id}
-                className="mt-4 w-full py-2 bg-red-600 hover:bg-red-500 disabled:bg-gray-600 text-white rounded-lg font-bold transition-all"
-              >
-                {resolving === fight.id ? '⏳ Resolving...' : '⚡ Resolve Fight'}
-              </button>
-            )}
-          </div>
-        ))}
-      </div>
-
-      {/* ========== CREATE FIGHT MODAL ========== */}
+      {/* ══════════════════════════════════════════
+          CREATE FIGHT MODAL
+         ══════════════════════════════════════════ */}
       {showModal && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-md">
+        <div
+          className="modal-backdrop"
+          onClick={() => setShowModal(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Create Challenge"
+        >
+          <div
+            className="modal-content animate-scale-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold text-white">⚔️ Create Challenge</h2>
-              <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-white text-2xl">&times;</button>
+              <div>
+                <h2 className="font-px-heading text-sm text-white">
+                  ⚔️ Create Challenge
+                </h2>
+                <p className="text-gray-500 text-xs mt-1">
+                  Select two agents and set the wager
+                </p>
+              </div>
+              <button
+                onClick={() => setShowModal(false)}
+                className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-500 hover:text-white hover:bg-white/5 transition-all"
+                aria-label="Close modal"
+              >
+                ✕
+              </button>
             </div>
 
             {/* Agent A */}
-            <label className="block text-gray-400 text-sm mb-2">Agent A (Your Fighter)</label>
+            <label className="block text-gray-400 text-xs font-bold uppercase tracking-wider mb-2">
+              🟣 Your Fighter
+            </label>
             <select
               value={agentA}
               onChange={(e) => setAgentA(e.target.value)}
-              className="w-full p-3 bg-gray-800 border border-gray-600 rounded-lg text-white mb-4 focus:border-purple-500 outline-none"
+              className="select-game mb-4"
             >
               <option value="">-- Select Agent A --</option>
-              {agents.map((a: any) => (
-                <option key={a.id} value={a.id}>{a.name} (ID: {a.id})</option>
+              {agents.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name} — {a.wins ?? 0}W/{a.losses ?? 0}L
+                </option>
               ))}
             </select>
 
             {/* Agent B */}
-            <label className="block text-gray-400 text-sm mb-2">Agent B (Opponent)</label>
+            <label className="block text-gray-400 text-xs font-bold uppercase tracking-wider mb-2">
+              🔵 Opponent
+            </label>
             <select
               value={agentB}
               onChange={(e) => setAgentB(e.target.value)}
-              className="w-full p-3 bg-gray-800 border border-gray-600 rounded-lg text-white mb-4 focus:border-purple-500 outline-none"
+              className="select-game mb-4"
             >
               <option value="">-- Select Agent B --</option>
-              {agents.map((a: any) => (
-                <option key={a.id} value={a.id}>{a.name} (ID: {a.id})</option>
-              ))}
+              {agents
+                .filter((a) => String(a.id) !== agentA)
+                .map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name} — {a.wins ?? 0}W/{a.losses ?? 0}L
+                  </option>
+                ))}
             </select>
 
-            {/* Stake Amount */}
-            <label className="block text-gray-400 text-sm mb-2">Stake Amount (MON)</label>
+            {/* Stake */}
+            <label className="block text-gray-400 text-xs font-bold uppercase tracking-wider mb-2">
+              💰 Wager (MON)
+            </label>
             <input
               type="number"
               value={stake}
@@ -216,16 +306,56 @@ export default function Arena() {
               placeholder="10"
               min="0.1"
               step="0.1"
-              className="w-full p-3 bg-gray-800 border border-gray-600 rounded-lg text-white mb-6 focus:border-purple-500 outline-none"
+              className="input-game mb-5"
             />
 
             {/* Preview */}
             {agentA && agentB && (
-              <div className="bg-gray-800 rounded-lg p-3 mb-4 text-center">
-                <span className="text-purple-400 font-bold">{getAgentName(Number(agentA))}</span>
-                <span className="text-yellow-400 mx-2">⚔️</span>
-                <span className="text-cyan-400 font-bold">{getAgentName(Number(agentB))}</span>
-                <p className="text-yellow-400 text-sm mt-1">Wager: {stake} MON each</p>
+              <div className="glass-card p-4 mb-5 text-center animate-scale-in">
+                <div className="flex items-center justify-center gap-3">
+                  <div className="text-center">
+                    <div
+                      className="agent-avatar mx-auto mb-1"
+                      style={{
+                        background: 'rgba(139,92,246,0.2)',
+                        width: 40,
+                        height: 40,
+                        fontSize: '1.2rem',
+                      }}
+                    >
+                      🤖
+                    </div>
+                    <p className="text-purple-400 font-bold text-sm">
+                      {getAgentName(Number(agentA))}
+                    </p>
+                  </div>
+                  <div className="vs-badge text-sm">VS</div>
+                  <div className="text-center">
+                    <div
+                      className="agent-avatar mx-auto mb-1"
+                      style={{
+                        background: 'rgba(6,182,212,0.2)',
+                        width: 40,
+                        height: 40,
+                        fontSize: '1.2rem',
+                      }}
+                    >
+                      🤖
+                    </div>
+                    <p className="text-cyan-400 font-bold text-sm">
+                      {getAgentName(Number(agentB))}
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-3 pt-3 border-t border-white/5">
+                  <span className="mon-amount text-yellow-400">
+                    ⚡ {stakeValue > 0 ? stake : '0'}{' '}
+                    <span className="mon-symbol">MON</span> each
+                  </span>
+                  <span className="text-gray-600 text-xs ml-2">
+                    (Total pot: {totalPot} MON)
+                  </span>
+                </div>
               </div>
             )}
 
@@ -233,42 +363,20 @@ export default function Arena() {
             <button
               onClick={handleCreate}
               disabled={creating || !agentA || !agentB}
-              className="w-full py-3 bg-purple-600 hover:bg-purple-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-lg font-bold text-lg transition-all"
+              className="btn-battle btn-shine w-full py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 disabled:from-gray-700 disabled:to-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed text-white rounded-xl font-bold text-base transition-all"
             >
-              {creating ? '⏳ Creating...' : '⚔️ Start Fight'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ========== BATTLE LOG MODAL ========== */}
-      {battleModal && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-lg max-h-[80vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold text-white">📜 Battle Log</h2>
-              <button onClick={() => setBattleModal(null)} className="text-gray-400 hover:text-white text-2xl">&times;</button>
-            </div>
-
-            {battleModal.reasoning && (
-              <p className="text-yellow-300 mb-4 italic">{battleModal.reasoning}</p>
-            )}
-
-            <div className="bg-[#0d1117] rounded-lg p-4 font-mono text-sm">
-              {(battleModal.battleLog ?? []).map((line: string, i: number) => (
-                <p key={i} className="text-green-400 mb-1">{line}</p>
-              ))}
-              {(!battleModal.battleLog || battleModal.battleLog.length === 0) && (
-                <p className="text-gray-500">No battle log available.</p>
+              {creating ? (
+                <span className="flex items-center justify-center gap-2">
+                  <span
+                    className="loading-spinner"
+                    style={{ width: 18, height: 18, borderWidth: 2 }}
+                  />
+                  Creating...
+                </span>
+              ) : (
+                '⚔️ Start Fight'
               )}
-            </div>
-
-            {battleModal.winner && (
-              <div className="mt-4 text-center">
-                <p className="text-2xl">🏆</p>
-                <p className="text-yellow-400 font-bold">Winner: {getAgentName(battleModal.winner)}</p>
-              </div>
-            )}
+            </button>
           </div>
         </div>
       )}
